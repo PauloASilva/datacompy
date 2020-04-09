@@ -572,11 +572,6 @@ class Compare:
             The report, as a JSON object
         """
 
-        data = {
-            "dataFrame1Name": self.df1_name,
-            "dataFrame2Name": self.df2_name
-        }
-
         # DataFrame Summary
         data["dataFrameSummary"] = [
             {"name": self.df1_name, "columns": self.df1.shape[1], "rows": self.df1.shape[0]},
