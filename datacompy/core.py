@@ -26,6 +26,7 @@ import logging
 from datetime import datetime
 import pandas as pd
 import numpy as np
+import json
 
 LOG = logging.getLogger(__name__)
 
@@ -556,6 +557,126 @@ class Compare:
 
         return report
 
+    def export(self, sample_count=10):
+        """Returns a JSON object of a report which can be used to compined with
+        other tools.
+
+        Parameters
+        ----------
+        sample_count : int, optional
+            The number of sample records to return.  Defaults to 10.
+
+        Returns
+        -------
+        str
+            The report, as a JSON object
+        """
+
+        data = {
+            "dataFrame1Name": self.df1_name,
+            "dataFrame2Name": self.df2_name
+        }
+
+        # DataFrame Summary
+        data["dataFrameSummary"] = [
+            {"name": self.df1_name, "columns": self.df1.shape[1], "rows": self.df1.shape[0]},
+            {"name": self.df2_name, "columns": self.df2.shape[1], "rows": self.df2.shape[0]}
+        ]
+          
+        # Column Summary
+        data["columnSummary"] = {
+            "intersectColumns": len(self.intersect_columns()),
+            "df1UniqueColumns": len(self.df1_unq_columns()),
+            "df2UniqueColumns": len(self.df2_unq_columns())
+        }
+
+        # Row Summary
+        if self.on_index:
+            match_on = "index"
+        else:
+            match_on = ", ".join(self.join_columns)
+
+        data["rowSummary"] = {
+            "matchedOn": match_on,
+            "duplicates": self._any_dupes,
+            "absTolerance": self.abs_tol,
+            "relTolerance": self.rel_tol,
+            "rowsInCommon": self.intersect_rows.shape[0],
+            "df1UniqueRows": self.df1_unq_rows.shape[0],
+            "df2UniqueRows": self.df2_unq_rows.shape[0],
+            "comparedColumnsUnequal": self.intersect_rows.shape[0] - self.count_matching_rows(),
+            "comparedColumnsEqual": self.count_matching_rows()
+        }
+
+        # Column Matching
+        cnt_intersect = self.intersect_rows.shape[0]
+        data["columnComparison"] = {
+            "someValuesEqual": len([col for col in self.column_stats if col["unequal_cnt"] > 0]),
+            "allValuesEqual": len([col for col in self.column_stats if col["unequal_cnt"] == 0]),
+            "totalValuesCompareUnequal": sum([col["unequal_cnt"] for col in self.column_stats])
+        }
+
+        match_stats = []
+        match_sample = []
+        any_mismatch = False
+        for column in self.column_stats:
+            if not column["all_match"]:
+                any_mismatch = True
+                match_stats.append(
+                    [
+                        column["column"],
+                        column["dtype1"],
+                        column["dtype2"],
+                        column["unequal_cnt"],
+                        column["max_diff"],
+                        column["null_diff"],
+                    ]
+                )
+                if column["unequal_cnt"] > 0:
+                    match_sample.append(
+                        self.sample_mismatch(column["column"], sample_count, for_display=True)
+                    )
+
+        if any_mismatch:
+            # Columns with Unequal Values or Types
+            data["columnComparison"]["unequalValuesOrTypes"] = []
+            data["columnComparison"]["unequalValuesOrTypes"].append(
+                [
+                    "Column",
+                    "{} dtype".format(self.df1_name),
+                    "{} dtype".format(self.df2_name),
+                    "# Unequal",
+                    "Max Diff",
+                    "# Null Diff"
+                ]
+            )
+
+            # TODO sort `match_stats` by column 0
+            data["columnComparison"]["unequalValuesOrTypes"] += match_stats
+
+            # Sample Rows with Unequal Values
+            # TODO sort array by number of elements asc
+            data["columnComparison"]["sampleRowsUnequalValues"] = []
+            
+            for sample in match_sample:
+                entry = [list(sample.keys())] + sample.to_records(index=False).tolist()
+                data["columnComparison"]["sampleRowsUnequalValues"].append(entry)
+
+        # Sample Rows Only in DataFrame1 (First 10 Columns)
+        if self.df1_unq_rows.shape[0] > 0:
+            columns = self.df1_unq_rows.columns[:10]
+            unq_count = min(sample_count, self.df1_unq_rows.shape[0])
+            entry = [ list(columns) ] + self.df1_unq_rows.sample(unq_count)[columns].to_records(index=False).tolist()
+            data["columnComparison"]["sampleRowsInDF1Only"] = entry
+
+        # Sample Rows Only in DataFrame2 (First 10 Columns)
+        if self.df2_unq_rows.shape[0] > 0:
+            columns = self.df2_unq_rows.columns[:10]
+            unq_count = min(sample_count, self.df2_unq_rows.shape[0])
+            entry = [ list(columns) ] + self.df2_unq_rows.sample(unq_count)[columns].to_records(index=False).tolist()
+            data["columnComparison"]["sampleRowsInDF2Only"] = entry
+
+        return json.dumps(data, cls=NpEncoder)
 
 def render(filename, *fields):
     """Renders out an individual template.  This basically just reads in a
@@ -782,3 +903,14 @@ def generate_id_within_group(dataframe, join_columns):
         )
     else:
         return dataframe[join_columns].groupby(join_columns).cumcount()
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            return super(NpEncoder, self).default(obj)
