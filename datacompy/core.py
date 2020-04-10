@@ -573,11 +573,13 @@ class Compare:
         """
 
         # DataFrame Summary
-        data["dataFrameSummary"] = [
-            {"name": self.df1_name, "columns": self.df1.shape[1], "rows": self.df1.shape[0]},
-            {"name": self.df2_name, "columns": self.df2.shape[1], "rows": self.df2.shape[0]}
-        ]
-          
+        data = {
+            "dataFrameSummary": [
+                {"name": self.df1_name, "columns": self.df1.shape[1], "rows": self.df1.shape[0]},
+                {"name": self.df2_name, "columns": self.df2.shape[1], "rows": self.df2.shape[0]}
+            ]
+        }
+
         # Column Summary
         data["columnSummary"] = {
             "intersectColumns": len(self.intersect_columns()),
